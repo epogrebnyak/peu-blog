@@ -4,6 +4,7 @@ import pathlib
 import re
 import subprocess
 import tempfile
+from pathlib import Path
 
 import jinja2
 import markdown
@@ -17,6 +18,9 @@ A blog about programming (usually scientific python), mathematics
 (usually game theory) and learning (usually student centred pedagogic
 approaches)."""
 
+# FIXME: decouple filepaths from content transformation
+
+# FIXME: dataclass?
 Post = collections.namedtuple(
     "post", ["stub", "title", "description", "date", "content", "metadata", "path"]
 )
@@ -52,7 +56,6 @@ def get_markdown_content_and_metadata(
     index_of_delimeter = raw.index(delimeter)
     if ignore_first_delimiter is True:
         index_of_delimeter += raw[index_of_delimeter + 1 :].index(delimeter)
-
     raw_metadata, md = raw[:index_of_delimeter], raw[index_of_delimeter:]
     metadata = yaml.load(raw_metadata)
     return markdown.markdown(md, extensions=["fenced_code"]), metadata
@@ -64,7 +67,6 @@ def get_ipynb_content_and_metadata(path, delimeter="---"):
     """
     contents = path.read_text()
     nb = json.loads(contents)
-
     cells = []
     for cell in nb["cells"]:
         if (
@@ -78,6 +80,7 @@ def get_ipynb_content_and_metadata(path, delimeter="---"):
 
     nb["cells"] = cells
 
+    # FIXME: Why need dunp to file? maybe StringIO should work for .from_file?
     temporary_nb = tempfile.NamedTemporaryFile()
     with open(temporary_nb.name, "w") as f:
         f.write(json.dumps(nb))
@@ -87,17 +90,16 @@ def get_ipynb_content_and_metadata(path, delimeter="---"):
     return html_exporter.from_file(temporary_nb)[0], metadata
 
 
-def read_file(path):
+def read_file(path: Path) -> Post:
     """
     Return a Post object given a path to a blog post
     """
-    stub = get_stub(path)
-    date = get_date(path)
     if path.suffix == ".ipynb":
         content, metadata = get_ipynb_content_and_metadata(path)
     if path.suffix == ".md":
         content, metadata = get_markdown_content_and_metadata(path)
     if path.suffix == ".Rmd":
+        # FIMXE: why not separate function?
         tempfile_md = tempfile.NamedTemporaryFile()
         subprocess.call(["R", "-e", f'knitr::knit("{path}", "{tempfile_md.name}")'])
         temp_path = pathlib.Path(tempfile_md.name)
@@ -107,10 +109,10 @@ def read_file(path):
 
     content = content.replace("{{root}}", ROOT)
     return Post(
-        stub=stub,
+        stub=get_stub(path),
         title=metadata["title"],
         description=metadata.get("description", ""),
-        date=date,
+        date=get_date(path),
         content=content,
         metadata=metadata,
         path=path,
@@ -126,14 +128,8 @@ def render_template(template_file, template_vars, searchpath="./src/templates/")
     template = template_env.get_template(template_file)
     return template.render(template_vars)
 
-
-def write_post(post, output_dir):
-    """
-    Create the output directory and write the post
-    """
-    output_path = output_dir / f"{post.stub}"
-    output_path.mkdir(exist_ok=True)
-    html = render_template(
+def make_html(post: Post) -> str:
+    return render_template(
         "post.html",
         {
             "blog_title": BLOGTITLE,
@@ -147,28 +143,28 @@ def write_post(post, output_dir):
         },
     )
 
+def write_post(post, output_dir):
+    """
+    Create the output directory and write the post
+    """
+    output_path = output_dir / f"{post.stub}"
+    output_path.mkdir(exist_ok=True)
+    html = make_html(post)
     (output_path / "index.html").write_text(html)
 
 
-def main(src_path=None, output_dir=None):
+def process(src_path: Path, output_dir: Path):
     """
-    Read all the source directories
+    Create posts and index page    
     """
-    if src_path is None:
-        src_path = pathlib.Path("./src/posts/")
-
-    if output_dir is None:
-        output_dir = pathlib.Path("./_build/posts")
-
-    output_dir.parent.mkdir(exist_ok=True)
-    output_dir.mkdir(exist_ok=True)
-
+    # Create posts
     posts = []
     for post_path in src_path.glob("./*/main*"):
         post = read_file(path=post_path)
         write_post(post=post, output_dir=output_dir)
         posts.append(post)
 
+    # Create index page
     posts.sort(key=lambda post: post.date, reverse=True)
 
     html = render_template(
@@ -181,3 +177,18 @@ def main(src_path=None, output_dir=None):
         },
     )
     (output_dir.parent / "index.html").write_text(html)
+
+
+def main(src_path=None, output_dir=None):
+    """
+    Create directories before processing files.
+    """
+    if src_path is None:
+        src_path = pathlib.Path("./src/posts/")
+
+    if output_dir is None:
+        output_dir = pathlib.Path("./_build/posts")
+
+    output_dir.parent.mkdir(exist_ok=True)
+    output_dir.mkdir(exist_ok=True)
+    process(src_path, output_dir)
