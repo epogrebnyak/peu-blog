@@ -181,4 +181,3 @@ def main(src_path=None, output_dir=None):
         },
     )
     (output_dir.parent / "index.html").write_text(html)
-

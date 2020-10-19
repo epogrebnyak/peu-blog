@@ -2,6 +2,7 @@ from invoke import task
 from peu import main
 import distutils.dir_util
 
+
 @task
 def test(c):
     c.run("pytest --doctest-glob='*.md'")
